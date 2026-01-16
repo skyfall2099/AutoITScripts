@@ -1,0 +1,11 @@
+# Config with credentials
+config.ini
+
+# Log files
+*.log
+
+# Claude project files
+.claude/
+
+# Compiled AutoIT executables
+*.exe

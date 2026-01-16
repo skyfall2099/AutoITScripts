@@ -1,0 +1,10 @@
+[Credentials]
+Password=YourPasswordHere
+
+[Settings]
+; 防休眠间隔（秒）
+AwakeInterval=300
+; 登录检测间隔（毫秒）
+LoginCheckInterval=500
+; 图像匹配容差（0-255，越大越宽松）
+Tolerance=15
