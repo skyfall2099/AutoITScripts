@@ -1,30 +1,29 @@
 ; ============================================
-; Citi 远程办公助手（简单版 - 能工作的版本）
+; 通用图像触发器 - 自动检测屏幕并发送按键
 ; ============================================
 
 #include <AutoItConstants.au3>
 #include <MsgBoxConstants.au3>
 #include <FileConstants.au3>
+#include <Array.au3>
 #include "ImageSearchDLL_UDF\ImageSearchDLL_UDF.au3"
 
 ; ============================================
-; 配置
+; 全局配置
 ; ============================================
 Global $g_sLogFile = @ScriptDir & "\citi_awake.log"
 Global $g_sConfigFile = @ScriptDir & "\config.ini"
-Global $g_sPassword = IniRead($g_sConfigFile, "Credentials", "Password", "")
 Global $g_iAwakeInterval = Int(IniRead($g_sConfigFile, "Settings", "AwakeInterval", "300"))
-Global $g_iLoginCheckInterval = Int(IniRead($g_sConfigFile, "Settings", "LoginCheckInterval", "500"))
-
-; 直接使用 images 目录下的 password_box.png
-Global $g_sTriggerImage = @ScriptDir & "\images\password_box.png"
-
+Global $g_iCheckInterval = Int(IniRead($g_sConfigFile, "Settings", "CheckInterval", "500"))
+Global $g_iTolerance = Int(IniRead($g_sConfigFile, "Settings", "Tolerance", "30"))
 Global $g_iLastAwakeTime = 0
+
+; 规则数组：[n][0]=名称, [n][1]=图片路径, [n][2]=按键, [n][3]=延迟
+Global $g_aRules[0][4]
 
 ; ============================================
 ; 热键
 ; ============================================
-HotKeySet("^!p", "TypePassword")
 HotKeySet("^!q", "ExitScript")
 
 ; ============================================
@@ -32,75 +31,140 @@ HotKeySet("^!q", "ExitScript")
 ; ============================================
 WriteLog("INFO", "========== 程序启动 ==========")
 
-If $g_sPassword = "" Then
-    MsgBox(16, "错误", "请在 config.ini 中配置密码")
+; 加载规则
+LoadRules()
+If UBound($g_aRules) = 0 Then
+    MsgBox(16, "错误", "没有找到任何规则，请检查 config.ini")
     Exit
 EndIf
 
-If Not FileExists($g_sTriggerImage) Then
-    MsgBox(16, "错误", "找不到: " & $g_sTriggerImage)
-    Exit
-EndIf
-
+; 初始化图像搜索
 _ImageSearch_Startup()
 If @error Then
     MsgBox(16, "错误", "ImageSearch 初始化失败")
     Exit
 EndIf
 
-WriteLog("INFO", "初始化完成")
-TrayTip("Citi 助手已启动", "Ctrl+Alt+Q 退出", 5)
+WriteLog("INFO", "初始化完成，已加载 " & UBound($g_aRules) & " 条规则")
+TrayTip("图像触发器已启动", "Ctrl+Alt+Q 退出", 5)
 
 ; ============================================
 ; 主循环
 ; ============================================
 While True
+    ; 防休眠
     If TimerDiff($g_iLastAwakeTime) > ($g_iAwakeInterval * 1000) Then
         KeepAwake()
         $g_iLastAwakeTime = TimerInit()
     EndIf
 
-    CheckAndAutoLogin()
-    Sleep($g_iLoginCheckInterval)
+    ; 检查所有规则
+    CheckAllRules()
+    Sleep($g_iCheckInterval)
 WEnd
 
 ; ============================================
-; 函数
+; 函数：加载规则
 ; ============================================
-Func CheckAndAutoLogin()
-    Local $aResult = _ImageSearch($g_sTriggerImage, 0, 0, 0, 0, -1, 15)
+Func LoadRules()
+    Local $aSections = IniReadSectionNames($g_sConfigFile)
+    If @error Then
+        WriteLog("ERROR", "无法读取配置文件")
+        Return
+    EndIf
 
-    If @error Then Return
-    If Not IsArray($aResult) Then Return
-    If UBound($aResult, 0) <> 2 Then Return
+    For $i = 1 To $aSections[0]
+        Local $sSection = $aSections[$i]
+        ; 只处理以 Rule_ 开头的 section
+        If StringLeft($sSection, 5) = "Rule_" Then
+            Local $sImage = IniRead($g_sConfigFile, $sSection, "Image", "")
+            Local $sKeys = IniRead($g_sConfigFile, $sSection, "Keys", "")
+            Local $iDelay = Int(IniRead($g_sConfigFile, $sSection, "Delay", "1500"))
 
-    If $aResult[0][0] > 0 Then
-        WriteLog("INFO", "检测到登录界面!")
-        Send($g_sPassword)
-        Sleep(100)
-        Send("{ENTER}")
-        WriteLog("INFO", "登录完成")
-        Sleep(1500)
+            If $sImage = "" Or $sKeys = "" Then
+                WriteLog("WARN", "规则 [" & $sSection & "] 缺少 Image 或 Keys，跳过")
+                ContinueLoop
+            EndIf
+
+            ; 转换为完整路径
+            Local $sFullPath = @ScriptDir & "\" & $sImage
+            If Not FileExists($sFullPath) Then
+                WriteLog("WARN", "规则 [" & $sSection & "] 图片不存在: " & $sFullPath)
+                ContinueLoop
+            EndIf
+
+            ; 添加规则
+            Local $iCount = UBound($g_aRules)
+            ReDim $g_aRules[$iCount + 1][4]
+            $g_aRules[$iCount][0] = $sSection
+            $g_aRules[$iCount][1] = $sFullPath
+            $g_aRules[$iCount][2] = $sKeys
+            $g_aRules[$iCount][3] = $iDelay
+
+            WriteLog("INFO", "加载规则: [" & $sSection & "] -> " & $sImage)
+        EndIf
+    Next
+EndFunc
+
+; ============================================
+; 函数：检查所有规则
+; ============================================
+Func CheckAllRules()
+    Local Static $iCheckCount = 0
+    Local Static $iLastLogTime = 0
+
+    $iCheckCount += 1
+
+    For $i = 0 To UBound($g_aRules) - 1
+        Local $sRuleName = $g_aRules[$i][0]
+        Local $sImagePath = $g_aRules[$i][1]
+        Local $sKeys = $g_aRules[$i][2]
+        Local $iDelay = $g_aRules[$i][3]
+
+        Local $aResult = _ImageSearch($sImagePath, 0, 0, 0, 0, -1, $g_iTolerance)
+
+        If @error Then ContinueLoop
+        If Not IsArray($aResult) Then ContinueLoop
+        If UBound($aResult, 0) <> 2 Then ContinueLoop
+
+        If $aResult[0][0] > 0 Then
+            WriteLog("INFO", "[" & $sRuleName & "] 匹配成功! 坐标: (" & $aResult[1][0] & ", " & $aResult[1][1] & ")")
+            Send($sKeys)
+            WriteLog("INFO", "[" & $sRuleName & "] 已发送按键")
+            Sleep($iDelay)
+            Return ; 匹配到一个就返回，避免重复触发
+        EndIf
+    Next
+
+    ; 定期打印状态
+    If TimerDiff($iLastLogTime) > 30000 Then
+        WriteLog("DEBUG", "已检查 " & $iCheckCount & " 次，未匹配到任何规则")
+        $iLastLogTime = TimerInit()
     EndIf
 EndFunc
 
+; ============================================
+; 函数：防休眠
+; ============================================
 Func KeepAwake()
     Local $aPos = MouseGetPos()
     MouseMove(10, 10, 0)
-    Sleep(50)
+    Sleep(10)
     MouseMove($aPos[0], $aPos[1], 0)
 EndFunc
 
-Func TypePassword()
-    Send($g_sPassword)
-EndFunc
-
+; ============================================
+; 函数：退出
+; ============================================
 Func ExitScript()
     WriteLog("INFO", "程序退出")
     _ImageSearch_Shutdown()
     Exit
 EndFunc
 
+; ============================================
+; 函数：写日志
+; ============================================
 Func WriteLog($sLevel, $sMessage)
     Local $sTime = @YEAR & "-" & @MON & "-" & @MDAY & " " & @HOUR & ":" & @MIN & ":" & @SEC
     Local $hFile = FileOpen($g_sLogFile, $FO_APPEND)
