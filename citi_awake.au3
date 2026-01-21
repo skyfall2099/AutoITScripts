@@ -7,6 +7,7 @@
 #include <FileConstants.au3>
 #include <Array.au3>
 #include "ImageSearchDLL_UDF\ImageSearchDLL_UDF.au3"
+#include <GDIPlus.au3>
 
 ; ============================================
 ; 全局配置
@@ -18,8 +19,8 @@ Global $g_iCheckInterval = Int(IniRead($g_sConfigFile, "Settings", "CheckInterva
 Global $g_iTolerance = Int(IniRead($g_sConfigFile, "Settings", "Tolerance", "30"))
 Global $g_iLastAwakeTime = 0
 
-; 规则数组：[n][0]=名称, [n][1]=图片路径, [n][2]=按键, [n][3]=延迟
-Global $g_aRules[0][4]
+; 规则数组：[n][0]=名称, [n][1]=图片路径, [n][2]=按键, [n][3]=延迟, [n][4]=OffsetX%, [n][5]=OffsetY%, [n][6]=图片宽度, [n][7]=图片高度
+Global $g_aRules[0][8]
 
 ; ============================================
 ; 热键
@@ -30,6 +31,7 @@ HotKeySet("^!q", "ExitScript")
 ; 初始化
 ; ============================================
 WriteLog("INFO", "========== 程序启动 ==========")
+_GDIPlus_Startup()
 
 ; 加载规则
 LoadRules()
@@ -80,6 +82,18 @@ Func LoadRules()
             Local $sImage = IniRead($g_sConfigFile, $sSection, "Image", "")
             Local $sKeys = IniRead($g_sConfigFile, $sSection, "Keys", "")
             Local $iDelay = Int(IniRead($g_sConfigFile, $sSection, "Delay", "1500"))
+            Local $iOffsetX_Percent = Int(IniRead($g_sConfigFile, $sSection, "ClickOffsetX_Percent", "50"))
+            Local $iOffsetY_Percent = Int(IniRead($g_sConfigFile, $sSection, "ClickOffsetY_Percent", "50"))
+
+            ; Clamp offset percentages to valid range 0-100
+            If $iOffsetX_Percent < 0 Or $iOffsetX_Percent > 100 Then
+                WriteLog("WARN", "规则 [" & $sSection & "] ClickOffsetX_Percent 超出范围，使用默认值 50")
+                $iOffsetX_Percent = 50
+            EndIf
+            If $iOffsetY_Percent < 0 Or $iOffsetY_Percent > 100 Then
+                WriteLog("WARN", "规则 [" & $sSection & "] ClickOffsetY_Percent 超出范围，使用默认值 50")
+                $iOffsetY_Percent = 50
+            EndIf
 
             If $sImage = "" Or $sKeys = "" Then
                 WriteLog("WARN", "规则 [" & $sSection & "] 缺少 Image 或 Keys，跳过")
@@ -93,13 +107,28 @@ Func LoadRules()
                 ContinueLoop
             EndIf
 
+            ; 获取图片尺寸
+            Local $hImage = _GDIPlus_ImageLoadFromFile($sFullPath)
+            If @error Then
+                WriteLog("WARN", "规则 [" & $sSection & "] GDI+ 无法加载图片: " & $sFullPath)
+                ContinueLoop
+            EndIf
+            Local $iImgWidth = _GDIPlus_ImageGetWidth($hImage)
+            Local $iImgHeight = _GDIPlus_ImageGetHeight($hImage)
+            _GDIPlus_ImageDispose($hImage)
+
             ; 添加规则
             Local $iCount = UBound($g_aRules)
-            ReDim $g_aRules[$iCount + 1][4]
+            ReDim $g_aRules[$iCount + 1][8]
             $g_aRules[$iCount][0] = $sSection
             $g_aRules[$iCount][1] = $sFullPath
             $g_aRules[$iCount][2] = $sKeys
             $g_aRules[$iCount][3] = $iDelay
+            $g_aRules[$iCount][4] = $iOffsetX_Percent
+            $g_aRules[$iCount][5] = $iOffsetY_Percent
+            $g_aRules[$iCount][6] = $iImgWidth
+            $g_aRules[$iCount][7] = $iImgHeight
+
 
             WriteLog("INFO", "加载规则: [" & $sSection & "] -> " & $sImage)
         EndIf
@@ -120,6 +149,10 @@ Func CheckAllRules()
         Local $sImagePath = $g_aRules[$i][1]
         Local $sKeys = $g_aRules[$i][2]
         Local $iDelay = $g_aRules[$i][3]
+        Local $iOffsetX_Percent = $g_aRules[$i][4]
+        Local $iOffsetY_Percent = $g_aRules[$i][5]
+        Local $iImgWidth = $g_aRules[$i][6]
+        Local $iImgHeight = $g_aRules[$i][7]
 
         Local $aResult = _ImageSearch($sImagePath, 0, 0, 0, 0, -1, $g_iTolerance)
 
@@ -128,9 +161,33 @@ Func CheckAllRules()
         If UBound($aResult, 0) <> 2 Then ContinueLoop
 
         If $aResult[0][0] > 0 Then
-            WriteLog("INFO", "[" & $sRuleName & "] 匹配成功! 坐标: (" & $aResult[1][0] & ", " & $aResult[1][1] & ")")
-            Send($sKeys)
-            WriteLog("INFO", "[" & $sRuleName & "] 已发送按键")
+            Local $iFoundX = $aResult[1][0]
+            Local $iFoundY = $aResult[1][1]
+            WriteLog("INFO", "[" & $sRuleName & "] 匹配成功! 左上角坐标: (" & $iFoundX & ", " & $iFoundY & ")")
+
+            Switch $sKeys
+                Case "{LCLICK}", "{RCLICK}", "{DCLICK}"
+                    Local $iClickX = $iFoundX + Round($iImgWidth * ($iOffsetX_Percent / 100))
+                    Local $iClickY = $iFoundY + Round($iImgHeight * ($iOffsetY_Percent / 100))
+                    Local $sClickType = "left"
+                    Local $iClickCount = 1
+                    Local $sLogMsg = "左键单击"
+
+                    If $sKeys = "{RCLICK}" Then
+                        $sClickType = "right"
+                        $sLogMsg = "右键单击"
+                    ElseIf $sKeys = "{DCLICK}" Then
+                        $iClickCount = 2
+                        $sLogMsg = "左键双击"
+                    EndIf
+
+                    MouseClick($sClickType, $iClickX, $iClickY, $iClickCount, 0)
+                    WriteLog("INFO", "[" & $sRuleName & "] 已发送 " & $sLogMsg & " 到坐标 (" & $iClickX & ", " & $iClickY & ")")
+                Case Else
+                    Send($sKeys)
+                    WriteLog("INFO", "[" & $sRuleName & "] 已发送按键: " & $sKeys)
+            EndSwitch
+
             Sleep($iDelay)
             Return ; 匹配到一个就返回，避免重复触发
         EndIf
@@ -159,6 +216,7 @@ EndFunc
 Func ExitScript()
     WriteLog("INFO", "程序退出")
     _ImageSearch_Shutdown()
+    _GDIPlus_Shutdown()
     Exit
 EndFunc
 

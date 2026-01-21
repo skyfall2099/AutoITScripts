@@ -1,10 +1,47 @@
-[Credentials]
-Password=YourPasswordHere
-
 [Settings]
-; 防休眠间隔（秒）
+; 防休眠间隔（秒），默认300秒
 AwakeInterval=300
-; 登录检测间隔（毫秒）
-LoginCheckInterval=500
-; 图像匹配容差（0-255，越大越宽松）
-Tolerance=15
+; 规则检查间隔（毫秒），默认500毫秒
+CheckInterval=500
+; 图像匹配容差（0-255），数值越大越宽松，默认30
+Tolerance=30
+
+; =====================================================================
+; 规则示例
+; =====================================================================
+
+[Rule_Example_SendKeys]
+Image=images\password_box.png
+; 当找到 password_box.png 时，发送 "my_password" 字符串
+Keys=my_password
+Delay=1500
+
+[Rule_Example_PressEnter]
+Image=images\vmware_login2.png
+; 当找到 vmware_login2.png 时，按 Enter 键
+Keys={ENTER}
+Delay=1000
+
+; --- 点击功能示例 ---
+
+[Rule_Example_CenterClick]
+Image=images\some_button.png
+; 当找到 some_button.png 时，左键单击图像的中心
+; 这是因为 ClickOffsetX_Percent 和 ClickOffsetY_Percent 默认为 50
+Keys={LCLICK}
+Delay=1000
+
+[Rule_Example_OffsetClick]
+Image=images\some_scene.png
+; 当找到 some_scene.png 时，在图像内部的指定位置进行右键单击
+; 在这个例子中，点击位置是相对于图像左上角的 (x=80%, y=75%) 处
+Keys={RCLICK}
+Delay=1000
+ClickOffsetX_Percent=80
+ClickOffsetY_Percent=75
+
+[Rule_Example_DoubleClick]
+Image=images\some_icon.png
+; 当找到 some_icon.png 时，双击图像中心
+Keys={DCLICK}
+Delay=1000
