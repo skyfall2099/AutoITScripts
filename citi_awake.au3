@@ -18,6 +18,9 @@ Global $g_iAwakeInterval = Int(IniRead($g_sConfigFile, "Settings", "AwakeInterva
 Global $g_iCheckInterval = Int(IniRead($g_sConfigFile, "Settings", "CheckInterval", "500"))
 Global $g_iTolerance = Int(IniRead($g_sConfigFile, "Settings", "Tolerance", "30"))
 Global $g_iLastAwakeTime = 0
+Global $g_iDllRestartInterval = Int(IniRead($g_sConfigFile, "Settings", "DllRestartInterval", "1800")) ; 默认30分钟重启一次DLL
+Global $g_iLastDllRestartTime = 0
+Global $g_sPassword = IniRead($g_sConfigFile, "Credentials", "Password", "")
 
 ; 规则数组：[n][0]=名称, [n][1]=图片路径, [n][2]=按键, [n][3]=延迟, [n][4]=OffsetX%, [n][5]=OffsetY%, [n][6]=图片宽度, [n][7]=图片高度
 Global $g_aRules[0][8]
@@ -25,6 +28,7 @@ Global $g_aRules[0][8]
 ; ============================================
 ; 热键
 ; ============================================
+HotKeySet("^!p", "TypePassword")
 HotKeySet("^!q", "ExitScript")
 
 ; ============================================
@@ -48,7 +52,7 @@ If @error Then
 EndIf
 
 WriteLog("INFO", "初始化完成，已加载 " & UBound($g_aRules) & " 条规则")
-TrayTip("图像触发器已启动", "Ctrl+Alt+Q 退出", 5)
+TrayTip("图像触发器已启动", "Ctrl+Alt+P 输入密码 | Ctrl+Alt+Q 退出", 5)
 
 ; ============================================
 ; 主循环
@@ -60,9 +64,15 @@ While True
         $g_iLastAwakeTime = TimerInit()
     EndIf
 
+    ; 定期重启 ImageSearch DLL 防止内存泄漏
+    If TimerDiff($g_iLastDllRestartTime) > ($g_iDllRestartInterval * 1000) Then
+        RestartImageSearchDll()
+        $g_iLastDllRestartTime = TimerInit()
+    EndIf
+
     ; 检查所有规则
     CheckAllRules()
-    Sleep($g_iCheckInterval)
+    Sleep(500)
 WEnd
 
 ; ============================================
@@ -155,6 +165,7 @@ Func CheckAllRules()
         Local $iImgHeight = $g_aRules[$i][7]
 
         Local $aResult = _ImageSearch($sImagePath, 0, 0, 0, 0, -1, $g_iTolerance)
+        Sleep(50) ; 给热键处理留出响应窗口
 
         If @error Then ContinueLoop
         If Not IsArray($aResult) Then ContinueLoop
@@ -208,6 +219,32 @@ Func KeepAwake()
     MouseMove(10, 10, 0)
     Sleep(10)
     MouseMove($aPos[0], $aPos[1], 0)
+EndFunc
+
+; ============================================
+; 函数：手动输入密码
+; ============================================
+Func TypePassword()
+    If $g_sPassword = "" Then
+        TrayTip("错误", "未配置密码，请在 config.ini [Credentials] 中设置 Password", 5)
+        Return
+    EndIf
+    Send($g_sPassword)
+    WriteLog("INFO", "手动输入密码 (Ctrl+Alt+P)")
+EndFunc
+
+; ============================================
+; 函数：定期重启 ImageSearch DLL
+; ============================================
+Func RestartImageSearchDll()
+    _ImageSearch_Shutdown()
+    Sleep(100)
+    _ImageSearch_Startup()
+    If @error Then
+        WriteLog("ERROR", "ImageSearch DLL 重启失败")
+    Else
+        WriteLog("INFO", "ImageSearch DLL 已重启（防止内存泄漏）")
+    EndIf
 EndFunc
 
 ; ============================================
