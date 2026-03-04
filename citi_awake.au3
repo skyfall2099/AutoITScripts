@@ -21,9 +21,10 @@ Global $g_iLastAwakeTime = 0
 Global $g_iDllRestartInterval = Int(IniRead($g_sConfigFile, "Settings", "DllRestartInterval", "1800")) ; 默认30分钟重启一次DLL
 Global $g_iLastDllRestartTime = 0
 Global $g_sPassword = IniRead($g_sConfigFile, "Credentials", "Password", "")
+Global $g_sScreenshotDir = @ScriptDir & "\" & IniRead($g_sConfigFile, "Settings", "ScreenshotDir", "screenshots")
 
-; 规则数组：[n][0]=名称, [n][1]=图片路径, [n][2]=按键, [n][3]=延迟, [n][4]=OffsetX%, [n][5]=OffsetY%, [n][6]=图片宽度, [n][7]=图片高度
-Global $g_aRules[0][8]
+; 规则数组：[n][0]=名称, [n][1]=图片路径, [n][2]=按键, [n][3]=延迟, [n][4]=OffsetX%, [n][5]=OffsetY%, [n][6]=图片宽度, [n][7]=图片高度, [n][8]=ScrLeft, [n][9]=ScrTop, [n][10]=ScrRight, [n][11]=ScrBottom
+Global $g_aRules[0][12]
 
 ; ============================================
 ; 热键
@@ -36,6 +37,9 @@ HotKeySet("^!q", "ExitScript")
 ; ============================================
 WriteLog("INFO", "========== 程序启动 ==========")
 _GDIPlus_Startup()
+
+; 创建截图目录
+If Not FileExists($g_sScreenshotDir) Then DirCreate($g_sScreenshotDir)
 
 ; 加载规则
 LoadRules()
@@ -95,6 +99,21 @@ Func LoadRules()
             Local $iOffsetX_Percent = Int(IniRead($g_sConfigFile, $sSection, "ClickOffsetX_Percent", "50"))
             Local $iOffsetY_Percent = Int(IniRead($g_sConfigFile, $sSection, "ClickOffsetY_Percent", "50"))
 
+            ; 读取截图区域（仅用于 {SCREENSHOT} 规则）
+            Local $sScreenshotRegion = IniRead($g_sConfigFile, $sSection, "ScreenshotRegion", "")
+            Local $iScrLeft = 0, $iScrTop = 0, $iScrRight = 0, $iScrBottom = 0
+            If $sScreenshotRegion <> "" Then
+                Local $aRegion = StringSplit($sScreenshotRegion, ",", 2)
+                If UBound($aRegion) = 4 Then
+                    $iScrLeft = Int(StringStripWS($aRegion[0], 3))
+                    $iScrTop = Int(StringStripWS($aRegion[1], 3))
+                    $iScrRight = Int(StringStripWS($aRegion[2], 3))
+                    $iScrBottom = Int(StringStripWS($aRegion[3], 3))
+                Else
+                    WriteLog("WARN", "规则 [" & $sSection & "] ScreenshotRegion 格式错误，应为 Left,Top,Right,Bottom")
+                EndIf
+            EndIf
+
             ; Clamp offset percentages to valid range 0-100
             If $iOffsetX_Percent < 0 Or $iOffsetX_Percent > 100 Then
                 WriteLog("WARN", "规则 [" & $sSection & "] ClickOffsetX_Percent 超出范围，使用默认值 50")
@@ -129,7 +148,7 @@ Func LoadRules()
 
             ; 添加规则
             Local $iCount = UBound($g_aRules)
-            ReDim $g_aRules[$iCount + 1][8]
+            ReDim $g_aRules[$iCount + 1][12]
             $g_aRules[$iCount][0] = $sSection
             $g_aRules[$iCount][1] = $sFullPath
             $g_aRules[$iCount][2] = $sKeys
@@ -138,6 +157,10 @@ Func LoadRules()
             $g_aRules[$iCount][5] = $iOffsetY_Percent
             $g_aRules[$iCount][6] = $iImgWidth
             $g_aRules[$iCount][7] = $iImgHeight
+            $g_aRules[$iCount][8] = $iScrLeft
+            $g_aRules[$iCount][9] = $iScrTop
+            $g_aRules[$iCount][10] = $iScrRight
+            $g_aRules[$iCount][11] = $iScrBottom
 
 
             WriteLog("INFO", "加载规则: [" & $sSection & "] -> " & $sImage)
@@ -194,6 +217,21 @@ Func CheckAllRules()
 
                     MouseClick($sClickType, $iClickX, $iClickY, $iClickCount, 0)
                     WriteLog("INFO", "[" & $sRuleName & "] 已发送 " & $sLogMsg & " 到坐标 (" & $iClickX & ", " & $iClickY & ")")
+                Case "{SCREENSHOT}"
+                    ; 截取屏幕区域并保存到文件
+                    Local $iScrLeft = $g_aRules[$i][8]
+                    Local $iScrTop = $g_aRules[$i][9]
+                    Local $iScrRight = $g_aRules[$i][10]
+                    Local $iScrBottom = $g_aRules[$i][11]
+                    Local $sTimestamp = @YEAR & @MON & @MDAY & "_" & @HOUR & @MIN & @SEC & "_" & @MSEC
+                    Local $sSafeRuleName = StringRegExpReplace($sRuleName, '[\\/:*?"<>|]', "_")
+                    Local $sScreenshotFile = $g_sScreenshotDir & "\" & $sSafeRuleName & "_" & $sTimestamp & ".png"
+                    Local $bResult = _ImageSearch_ScreenCapture_SaveImage($sScreenshotFile, $iScrLeft, $iScrTop, $iScrRight, $iScrBottom)
+                    If $bResult Then
+                        WriteLog("INFO", "[" & $sRuleName & "] 截图已保存: " & $sScreenshotFile)
+                    Else
+                        WriteLog("ERROR", "[" & $sRuleName & "] 截图保存失败: " & $sScreenshotFile)
+                    EndIf
                 Case Else
                     Send($sKeys)
                     WriteLog("INFO", "[" & $sRuleName & "] 已发送按键: " & $sKeys)
