@@ -5,6 +5,8 @@ AwakeInterval=300
 CheckInterval=500
 ; 图像匹配容差（0-255），数值越大越宽松，默认30
 Tolerance=30
+; 截图保存目录（相对于脚本目录），默认 screenshots
+ScreenshotDir=screenshots
 
 ; =====================================================================
 ; 规则示例
@@ -45,3 +47,20 @@ Image=images\some_icon.png
 ; 当找到 some_icon.png 时，双击图像中心
 Keys={DCLICK}
 Delay=1000
+
+; --- 截图功能示例 ---
+
+[Rule_Example_ScreenshotFullScreen]
+Image=images\new_email_indicator.png
+; 当找到 new_email_indicator.png 时，截取全屏并保存到 screenshots 目录
+Keys={SCREENSHOT}
+Delay=5000
+
+[Rule_Example_ScreenshotRegion]
+Image=images\skype_new_message.png
+; 当找到 skype_new_message.png 时，截取指定区域并保存
+; ScreenshotRegion 格式：Left,Top,Right,Bottom（像素坐标）
+; 省略或留空则截取全屏
+Keys={SCREENSHOT}
+ScreenshotRegion=100,200,800,600
+Delay=5000
